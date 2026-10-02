@@ -237,3 +237,28 @@ test("PAN newer-layout synthetic image preserves holder name through real OCR", 
     assert.equal(result.name, "SYNTHETIC USER"); assert.equal(result.documentNumber, "ABCDE0000Z");
   } finally { image?.fill(0); processed?.fill(0); await ocr.terminateOcrWorker(); }
 });
+
+test("Aadhaar names support holder labels and known OCR label variants", () => {
+  const parse = harness().load("services/parsers/aadhaar.parser").parseAadhaar;
+  for (const label of ["Name", "NAME", "Nane", "Narne", "Name of Card Holder", "Holder's Name", "नाम / Name"]) {
+    for (const field of [label + ": Synthetic O'User", label + "\nनाम\nSynthetic O'User"]) {
+      assert.equal(parse("UIDAI\nGOVT. OF INDIA\n" + field + "\nDate of Birth: 01/01/1900\nMale\n0000 0000 0000").name, "Synthetic O'User");
+    }
+  }
+});
+test("Aadhaar names support bilingual DOB, year-of-birth and gender context", () => {
+  const parse = harness().load("services/parsers/aadhaar.parser").parseAadhaar;
+  for (const cue of ["जन्म तिथि / DOB: 01/01/1900", "Year of Birth: 1900", "YOB: 1900", "Gender: Male", "Male"]) {
+    assert.equal(parse("GOVERNMENT OF INDIA\nSynthetic User\nनाम\n" + cue + "\n0000 0000 0000").name, "Synthetic User");
+  }
+});
+test("Aadhaar name extraction rejects parent, care-of, address and header candidates", () => {
+  const parse = harness().load("services/parsers/aadhaar.parser").parseAadhaar;
+  for (const text of ["Name\nFather's Name\nDemo Parent\nDOB: 01/01/1900", "C/O: Demo Parent\nDOB: 01/01/1900", "Father's Name\nDemo Parent\nDOB: 01/01/1900", "Address: Example Town\nDemo Parent\nDOB: 01/01/1900", "GOVT. OF INDIA\nDOB: 01/01/1900", "Name: GOVERNMENT OF INDIA\nDOB: 01/01/1900", "Name: 0000 0000 0000", "Name: Synthetic User\nName: Different User"]) assert.equal(parse(text).name, null);
+  assert.equal(parse("UIDAI\n0000 0000 0000").name, null);
+});
+test("Aadhaar manual-style OCR reaches API with preserved name and unchanged schema", async () => {
+  const { response, json } = await invoke({ text: "UIDAI\nGOVT. OF INDIA\nName of Card Holder: Synthetic User\nDOB: 01/01/1900\nMale\n0000 0000 0000" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(json.data, { idType: "aadhaar", name: "Synthetic User", documentNumber: "0000 0000 0000", address: null, phoneNumber: null });
+});

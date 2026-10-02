@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import CameraCapture from "@/components/CameraCapture";
 import { ArrowRight, Check, CircleHelp, Clipboard, FileText, Hash, ImagePlus, LoaderCircle, Menu, RotateCcw, Save, ScanLine, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import type { ApiResponse, ExtractionResult, IdType, StoredExtraction } from "@/types/extraction";
 
@@ -133,7 +134,7 @@ export default function Home() {
       <section className="hero"><div className="eyebrow"><span className="eyebrow-dot" /> SMART ID EXTRACTION</div><h1>Extract details<br className="desktop-break" /> from your <span>ID.</span></h1><p>Upload an Aadhaar Card, PAN Card, or Driving Licence and extract its key information.</p><div className="hero-note"><ShieldCheck size={15} /> Your ID image is processed temporarily and is not stored.</div></section>
       <section className="workspace" id="workspace" aria-label="ID extraction workspace">
         <div className="input-card card">
-          <div className="card-head"><div className="card-title"><span className="title-icon purple"><FileText size={17} /></span><div><h2>Your ID image</h2><span className="subheading">Choose a clear image of your document</span></div></div><button className="header-upload" onClick={() => inputRef.current?.click()} disabled={busy}><ImagePlus size={14} /> Upload image</button></div>
+          <div className="card-head"><div className="card-title"><span className="title-icon purple"><FileText size={17} /></span><div><h2>Your ID image</h2><span className="subheading">Choose a clear image of your document</span></div></div><div className="input-actions"><CameraCapture disabled={busy} onSelect={selectFile} /><button className="header-upload" onClick={() => inputRef.current?.click()} disabled={busy}><ImagePlus size={14} /> Upload image</button></div></div>
           <div className="photo-upload">
             <input ref={inputRef} className="file-input" id="id-image" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Government ID image" onChange={(event) => { selectFile(event.target.files?.[0]); event.currentTarget.value = ""; }} disabled={busy} />
             <button type="button" className={"upload-drop primary-upload " + (busy ? "uploading" : "")} onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFile(event.dataTransfer.files[0]); }} disabled={busy}>

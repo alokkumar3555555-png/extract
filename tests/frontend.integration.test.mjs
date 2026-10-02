@@ -14,7 +14,7 @@ const requireLocal = createRequire(import.meta.url);
 const demo = { idType: "pan", name: "SYNTHETIC USER", documentNumber: "ABCDE0000Z", address: null, phoneNumber: null };
 
 // Exercise the actual page's event handlers and state transitions without a browser dependency.
-function mount({ responses = [], fetchImpl } = {}) {
+function mount({ responses = [], fetchImpl, sourceFile = "app/page.tsx", props, mediaDevices, documentImpl } = {}) {
   const slots = []; const cleanups = []; const requests = []; const revoked = []; const created = []; const clipboard = [];
   let cursor = 0;
   const react = { ...requireLocal("react"),
@@ -23,16 +23,17 @@ function mount({ responses = [], fetchImpl } = {}) {
     useEffect: effect => { const index = cursor++; if (!(index in slots)) { slots[index] = true; cleanups.push(effect()); } },
   };
   const mod = { exports: {} };
-  const code = ts.transpileModule(fs.readFileSync(path.join(root, "app/page.tsx"), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
+  const code = ts.transpileModule(fs.readFileSync(path.join(root, sourceFile), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
   vm.runInNewContext(code, {
-    exports: mod.exports, require: ref => ref === "react" ? react : ref === "next/image" ? { __esModule: true, default: props => requireLocal("react").createElement("img", props) } : requireLocal(ref),
+    exports: mod.exports, require: ref => ref === "react" ? react : ref === "@/components/CameraCapture" ? { __esModule: true, default: () => null } : ref === "next/image" ? { __esModule: true, default: props => requireLocal("react").createElement("img", props) } : requireLocal(ref),
     URL: { createObjectURL: file => { const url = "blob:synthetic-" + created.length; created.push({ file, url }); return url; }, revokeObjectURL: url => revoked.push(url) },
     FormData, AbortController, setTimeout, clearTimeout,
-    navigator: { clipboard: { writeText: async value => clipboard.push(value) } },
+    document: documentImpl, File,
+    navigator: { mediaDevices, clipboard: { writeText: async value => clipboard.push(value) } },
     fetch: async (url, options) => { requests.push({ url, options }); return fetchImpl ? fetchImpl(url, options) : responses.shift(); },
     console: new Proxy({}, { get: () => () => { throw Error("Unexpected logging"); } }),
   });
-  const render = () => { cursor = 0; return mod.exports.default(); };
+  const render = () => { cursor = 0; return mod.exports.default(props); };
   const unmount = () => cleanups.forEach(cleanup => cleanup?.());
   return { render, unmount, requests, revoked, created, clipboard };
 }
@@ -168,4 +169,35 @@ test("live frontend handlers call local OCR and Firestore and clean up the recor
       assert.equal((await fetch(base + "/api/extractions/" + encodeURIComponent(createdId))).status, 404, "Deletion verified");
     }
   }
+});
+
+test("camera capture converts frame to JPEG and stops tracks before selection", async () => {
+  const selected = []; let stops = 0;
+  const stream = { getTracks: () => [{ stop: () => { stops++; } }] };
+  const canvas = { width: 0, height: 0, getContext: () => ({ drawImage: () => {} }), toBlob: callback => callback(new Blob(["synthetic camera"], { type: "image/jpeg" })) };
+  const h = mount({ sourceFile: "components/CameraCapture.tsx", props: { disabled: false, onSelect: file => selected.push(file) }, mediaDevices: { getUserMedia: async options => { assert.equal(options.audio, false); assert.equal(options.video.facingMode.ideal, "environment"); return stream; } }, documentImpl: { createElement: () => canvas } });
+  button(h.render(), "Take photo").props.onClick(); await new Promise(resolve => setImmediate(resolve));
+  const video = nodes(h.render()).find(node => node.type === "video"); assert.ok(video);
+  video.props.ref.current = { videoWidth: 4000, videoHeight: 3000, srcObject: stream };
+  video.props.onLoadedMetadata(); button(h.render(), "Use photo").props.onClick();
+  assert.equal(selected.length, 1); assert.equal(selected[0].type, "image/jpeg"); assert.equal(stops, 1);
+  assert.equal(nodes(h.render()).some(node => node.type === "dialog"), false); h.unmount();
+});
+test("camera cancellation and unmount release tracks; denied permission is safe", async () => {
+  let resolve; let stops = 0; const pending = new Promise(done => { resolve = done; });
+  const props = { disabled: false, onSelect: () => assert.fail("Cancelled camera should not select") };
+  const h = mount({ sourceFile: "components/CameraCapture.tsx", props, mediaDevices: { getUserMedia: () => pending } });
+  button(h.render(), "Take photo").props.onClick(); button(h.render(), "Cancel camera").props.onClick();
+  resolve({ getTracks: () => [{ stop: () => { stops++; } }] }); await new Promise(done => setImmediate(done));
+  assert.equal(stops, 1); assert.equal(nodes(h.render()).some(node => node.type === "dialog"), false); h.unmount();
+  const active = mount({ sourceFile: "components/CameraCapture.tsx", props, mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => { stops++; } }] }) } });
+  button(active.render(), "Take photo").props.onClick(); await new Promise(done => setImmediate(done)); active.unmount(); assert.equal(stops, 2);
+  const denied = mount({ sourceFile: "components/CameraCapture.tsx", props, mediaDevices: { getUserMedia: async () => { throw Error("PRIVATE_CAMERA_DETAILS"); } } });
+  button(denied.render(), "Take photo").props.onClick(); await new Promise(done => setImmediate(done));
+  assert.ok(nodes(denied.render()).some(node => node.props?.role === "alert")); assert.equal(text(denied.render()).includes("PRIVATE_CAMERA_DETAILS"), false); denied.unmount();
+});
+test("camera native fallback has rear-camera capture and respects busy state", () => {
+  const h = mount({ sourceFile: "components/CameraCapture.tsx", props: { disabled: true, onSelect: () => {} } });
+  assert.equal(button(h.render(), "Take photo").props.disabled, true);
+  assert.equal(fileInput(h.render()).props.capture, "environment"); h.unmount();
 });
